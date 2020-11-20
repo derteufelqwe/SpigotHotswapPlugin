@@ -1,0 +1,3 @@
+name: SpigotHotswapTestPlugin
+version: 1.12.2
+main: de.derteufelqwe.Testserver.Testserver

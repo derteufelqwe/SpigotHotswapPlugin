@@ -1,0 +1,8 @@
+# IDE
+.idea
+
+# SpigotHotswap
+SpigotHotswap/target
+
+# Testserver
+Testserver/target
