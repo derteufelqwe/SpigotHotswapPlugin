@@ -1,15 +1,13 @@
 package de.derteufelqwe.SpigotHotswap;
 
-import lombok.SneakyThrows;
 import org.bukkit.event.Listener;
 import org.bukkit.plugin.SimplePluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.hotswap.agent.command.Command;
 
-import java.util.logging.Logger;
-
 /**
  * Hotswap command to reload Spigots event listeners
+ * This command is executed after the class got reloaded, so re-registering it here will register the new version
  */
 public class ReloadEventsCommand implements Command {
 
@@ -23,10 +21,10 @@ public class ReloadEventsCommand implements Command {
         this.plugin = plugin;
     }
 
-    @SneakyThrows
+
     @Override
     public void executeCommand() {
         this.pluginManager.registerEvents(this.listener, this.plugin);
-        SpigotHotswapPlugin.LOGGER.info("Re-added Listener: " + this.listener);
+        SpigotHotswapPlugin.debug("Re-added Listener: " + this.listener);
     }
 }

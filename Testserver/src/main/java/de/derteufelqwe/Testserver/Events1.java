@@ -15,11 +15,11 @@ public class Events1 implements Listener {
     }
 
     @EventHandler
-    public void ssssf(PlayerQuitEvent event) {
+    public void swswssf(PlayerQuitEvent event) {
         System.out.println("[P] Player " + event.getPlayer().getDisplayName() + " lieaft.");
     }
 
-    public int sdsdfwewess() {
+    public int aaswwwssdwwsswsssqss() {
         return 0;
     }
 
