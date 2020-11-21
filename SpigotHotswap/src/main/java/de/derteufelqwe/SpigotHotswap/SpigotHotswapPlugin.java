@@ -17,14 +17,15 @@ import org.hotswap.agent.command.Scheduler;
 import org.hotswap.agent.config.PluginConfiguration;
 import org.hotswap.agent.javassist.ClassPool;
 import org.hotswap.agent.javassist.CtClass;
+import org.hotswap.agent.javassist.NotFoundException;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.HashSet;
-import java.util.Properties;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.TimeoutException;
+import java.util.logging.ConsoleHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -33,13 +34,13 @@ import java.util.regex.Pattern;
 @Plugin(name = "SpigotHotswapPlugin", testedVersions = "1.12.2 upwards")
 public class SpigotHotswapPlugin {
 
-    private static Logger LOGGER = Logger.getLogger("org.hotswap.agent.plugin");
-
-    private static boolean enabled = true;
+    public static Logger LOGGER = getLogger();
+    public static LogLevel LOGLEVEL = LogLevel.INFO;
     private static Properties properties;
-    public static final String PLUGIN_PACKAGE = "*.*";
+    private static final String PLUGIN_PACKAGE = "*.*";
     private static Pattern RE_CLASS;
-    private static String pluginName = "SpigotHotswapTestPlugin";
+    private static String pluginName = "";
+    private static Map<Class<? extends Listener>, Listener> listenerMap = new HashMap<>();
 
 
     @Init
@@ -55,21 +56,20 @@ public class SpigotHotswapPlugin {
     @SneakyThrows
     @OnClassLoadEvent(classNameRegexp = PLUGIN_PACKAGE, events = LoadEvent.REDEFINE)
     public static void onClassChange(ClassLoader cLoader, ClassPool classPool, CtClass ctClass, String classname) {
-        if (!enabled) {
-            return;
-        }
-        System.err.println("Hallo Welt");
+
+        // Loads the properties file and sets the affected class regex
         if (properties == null) {
             properties = getProperties(cLoader);
             if (properties == null) {
-                enabled = false;
-                System.out.println("[SHP] SpigotHotswap.properties file missing.");
+                LOGGER.severe("SpigotHotswap.properties file missing.");
+                return;
 
             } else {
-                RE_CLASS = Pattern.compile(properties.getProperty("packageName", ""));
+               loadFromProperties();
             }
         }
 
+        // This doesn't work without a working class regex
         if (RE_CLASS == null) {
             return;
 
@@ -80,40 +80,83 @@ public class SpigotHotswapPlugin {
             }
         }
 
-        System.out.println("Load class " + classname);
-        LOGGER.log(Level.WARNING, "logger - Load class");
+        if (pluginName == null || pluginName.equals("")) {
+            LOGGER.severe("Properties entry 'pluginName' required.");
+            return;
+        }
 
+        LOGGER.info("Updated class " + classname);
+
+        // Process Listener classes
         if (isListenerSubclass(ctClass)) {
             onEventListenerChange(ctClass, cLoader, classname.replace("/", "."));
         }
 
-        System.out.println("Properties: " + getProperties(cLoader));
     }
 
 
-    @SneakyThrows
-    private static boolean isListenerSubclass(CtClass ctClass) {
-        for (CtClass interfaceClazz : ctClass.getInterfaces()) {
-            if (interfaceClazz.getName().equals(Listener.class.getName())) {
-                return true;
+    /**
+     * Loads the required values from the properties
+     */
+    private static void loadFromProperties() {
+        // Package name regex
+        String packageName = properties.getProperty("packageName", "");
+        if (packageName.equals("")) {
+            LOGGER.severe("Properties entry 'packageName' required.");
+            return;
+        }
+        RE_CLASS = Pattern.compile(packageName);
+
+        // Plugin name
+        pluginName = properties.getProperty("pluginName", "");
+
+        String logLevel = properties.getProperty("logLevel", "");
+        if (!logLevel.equals("")) {
+            try {
+                LOGLEVEL = LogLevel.valueOf(logLevel);
+
+            } catch (IllegalArgumentException e) {
+                //
             }
         }
+    }
 
-        CtClass superClazz = ctClass.getSuperclass();
-        if (!superClazz.getName().equals(Object.class.getName())) {
-            return isListenerSubclass(superClazz);
+
+    /**
+     * Checks if a CtClass is a subclass of {@link Listener}
+     * @return True if this is the case.
+     */
+    private static boolean isListenerSubclass(CtClass ctClass) {
+        try {
+            // Check the interfaces of the class
+            for (CtClass interfaceClazz : ctClass.getInterfaces()) {
+                if (interfaceClazz.getName().equals(Listener.class.getName())) {
+                    return true;
+                }
+            }
+
+            // Repeat on the superclass
+            CtClass superClazz = ctClass.getSuperclass();
+            if (!superClazz.getName().equals(Object.class.getName())) {
+                return isListenerSubclass(superClazz);
+            }
+
+        } catch (NotFoundException e) {
+            return false;
         }
 
         return false;
     }
 
-
+    /**
+     * Method responsible for parsing eventListeners
+     * @param ctClass CtClass that was changed
+     * @param cLoader ClassLoader of the class that was updated
+     * @param className Name of the changed class
+     */
     @SneakyThrows
     private static void onEventListenerChange(CtClass ctClass, ClassLoader cLoader, String className) {
-        System.out.println("Reloaded Listener class " + className);
-
-        Field f = JavaPlugin.class.getDeclaredField("loader");
-        f.setAccessible(true);
+        LOGGER.info("Reloaded Listener class " + className);
 
         SimplePluginManager pluginManager = (SimplePluginManager) Bukkit.getPluginManager();
 
@@ -125,32 +168,60 @@ public class SpigotHotswapPlugin {
 
         Class<? extends Listener> clazz = (Class<? extends Listener>) cLoader.loadClass(className);
 
-        // Gather data
+        // -- Gather data --
 
         Set<Class<? extends Event>> usedEvents = getUsedEvents(clazz, cLoader);
-        System.out.println(usedEvents);
+        LOGGER.info("Used events: " + usedEvents);
 
         JavaPlugin javaPlugin = (JavaPlugin) Bukkit.getPluginManager().getPlugin(pluginName);
 
-        // Unregister Events
+        // -- Unregister Events --
 
-        Set<Listener> removed = analyzeHandlers(getEventListeners, pluginManager, usedEvents, clazz);
-        System.out.println("Removed: " + removed);
+        Listener removedListener = analyzeHandlers(getEventListeners, pluginManager, usedEvents, clazz);
+        LOGGER.info( "Removed Listener: " + removedListener);
 
-        // Re-Register events
+        // -- Re-Register events --
 
-        if (removed.size() > 0) {
-            scheduler.scheduleCommand(new ReloadEventsCommand(pluginManager, removed.stream().iterator().next(), javaPlugin));
+        if (removedListener != null) {
+            listenerMap.put(clazz, removedListener);
+            scheduler.scheduleCommand(new ReloadEventsCommand(pluginManager, removedListener, javaPlugin));
 
+        } else if (listenerMap.containsKey(clazz)) {
+            /*
+             * Re-register a version from the cache.
+             * This is required when you remove all @EventHandler annotations from a listener class and reload the code.
+             * This reloader will deregister the instance of the event listener and don't reregister it, since there are
+             * no EventHandlers to register.
+             * Adding an EventHandler to the class and reloading it, wont't add it to spigot again, since no Listener
+             * instance can be taken from the server.
+             * To solve this, an existing instance gets cached and reused.
+             */
+            scheduler.scheduleCommand(new ReloadEventsCommand(pluginManager, listenerMap.get(clazz), javaPlugin));
+
+        } else {
+            /*
+             * If no cached Listener instance was found, the plugin tries to create a version with the default constructor.
+             */
+            try {
+                scheduler.scheduleCommand(new ReloadEventsCommand(pluginManager, clazz.getConstructor().newInstance(), javaPlugin));
+
+            } catch (ReflectiveOperationException e) {
+                return;
+            }
         }
     }
 
-
-
+    /**
+     * Returns the removed listeners
+     * @param getEventListeners Method to get the eventListeners
+     * @param pluginManager Spigots Pluginmanager
+     * @param usedEvents Set of used events in the class to identify which events need to be checked for reload
+     * @param oldClazz Class object of the old version (before reload)
+     */
     @SneakyThrows
-    private static Set<Listener> analyzeHandlers(Method getEventListeners, SimplePluginManager pluginManager, Set<Class<? extends Event>> usedEvents, Class<? extends Listener> oldClazz) {
-        Set<Listener> removedListeners = new HashSet<>();
+    private static Listener analyzeHandlers(Method getEventListeners, SimplePluginManager pluginManager, Set<Class<? extends Event>> usedEvents, Class<? extends Listener> oldClazz) {
         JavaPlugin javaPlugin = (JavaPlugin) Bukkit.getPluginManager().getPlugin(pluginName);
+        Listener usedListener = null;
 
         for (Class<? extends Event> e : usedEvents) {
             HandlerList handlerList = (HandlerList) getEventListeners.invoke(pluginManager, e);
@@ -160,7 +231,6 @@ public class SpigotHotswapPlugin {
 
             Method getListener = RegisteredListener.class.getDeclaredMethod("getListener");
             getListener.setAccessible(true);
-
 
             for (RegisteredListener l : handlerList.getRegisteredListeners()) {
                 JavaPlugin plugin = (JavaPlugin) getPlugin.invoke(l);
@@ -176,18 +246,22 @@ public class SpigotHotswapPlugin {
 
 
                 handlerList.unregister(l);
-                System.out.println("[HSP] Unregistered " + e + " in " + listener.toString());
+                LOGGER.info("Unregistered " + e + " in " + listener.toString());
 
-                removedListeners.add(listener);
+                if (usedListener == null) {
+                    usedListener = listener;
+                } else {
+                    if (usedListener != listener) {
+                        throw new RuntimeException(String.format("Found different Listeners %s and %s for class %s. This shouldn't be possible.",
+                                usedListener, listener, oldClazz));
+                    }
+                }
             }
 
-
-            continue;
         }
 
-        return removedListeners;
+        return usedListener;
     }
-
 
     /**
      * Scans a class for @{@link EventHandler} methods and extracts the Used events
@@ -223,7 +297,6 @@ public class SpigotHotswapPlugin {
         return events;
     }
 
-
     /**
      * Checks if a class is a subtype of {@link Event}
      */
@@ -241,7 +314,11 @@ public class SpigotHotswapPlugin {
         return false;
     }
 
-
+    /**
+     * Loads the properties file
+     * @param classLoader Spigots ClassLoader
+     * @return Properties of null if they don't exist
+     */
     private static Properties getProperties(ClassLoader classLoader) {
         InputStream inputStream = classLoader.getResourceAsStream("SpigotHotswap.properties");
 
@@ -249,11 +326,26 @@ public class SpigotHotswapPlugin {
         try {
             properties.load(inputStream);
 
-        } catch (IOException e) {
+        } catch (IOException | NullPointerException e) {
             return null;
         }
 
         return properties;
     }
+
+    /**
+     * Constructs the logger
+     */
+    private static Logger getLogger() {
+        Logger logger = Logger.getLogger(SpigotHotswapPlugin.class.getName());
+
+        logger.setUseParentHandlers(false);
+        ConsoleHandler consoleHandler = new ConsoleHandler();
+        consoleHandler.setFormatter(new Formatter());
+        logger.addHandler(consoleHandler);
+
+        return logger;
+    }
+
 
 }

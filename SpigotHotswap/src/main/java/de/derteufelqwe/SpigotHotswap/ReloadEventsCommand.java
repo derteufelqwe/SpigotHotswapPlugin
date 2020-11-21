@@ -6,6 +6,8 @@ import org.bukkit.plugin.SimplePluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.hotswap.agent.command.Command;
 
+import java.util.logging.Logger;
+
 /**
  * Hotswap command to reload Spigots event listeners
  */
@@ -25,5 +27,6 @@ public class ReloadEventsCommand implements Command {
     @Override
     public void executeCommand() {
         this.pluginManager.registerEvents(this.listener, this.plugin);
+        SpigotHotswapPlugin.LOGGER.info("Re-added Listener: " + this.listener);
     }
 }
