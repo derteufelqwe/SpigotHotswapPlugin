@@ -26,14 +26,13 @@ import java.util.*;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.Handler;
 import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Plugin(name = "SpigotHotswapPlugin", testedVersions = "1.12.2 upwards")
 public class SpigotHotswapPlugin {
 
-    public static Logger LOGGER = getLogger();
+    public static Logger LOGGER = new Logger();
     private static Properties properties;
     private static final String PLUGIN_PACKAGE = "*.*";
     private static Pattern RE_CLASS;
@@ -55,12 +54,28 @@ public class SpigotHotswapPlugin {
     @SneakyThrows
     @OnClassLoadEvent(classNameRegexp = PLUGIN_PACKAGE, events = LoadEvent.REDEFINE)
     public static void onClassChange(ClassLoader cLoader, ClassPool classPool, CtClass ctClass, String classname) {
+        classname = classname.replace("/", ".");
+
+        LOGGER.all("Updated class " + classname);
+
         if (!initData(cLoader, classname)) {
+            LOGGER.all("Init data failed.");
             return;
         }
 
+        // Class filter
+        if (RE_CLASS == null) {
+            return;
 
-        info("Updating class " + classname);
+        } else {
+            Matcher m = RE_CLASS.matcher(classname);
+            if (!m.matches()) {
+                LOGGER.all("Reloaded class " + classname + " not matching.");
+                return;
+            }
+        }
+
+        LOGGER.info("Updating class " + classname);
 
         // Process Listener classes
         if (isListenerSubclass(ctClass)) {
@@ -82,7 +97,7 @@ public class SpigotHotswapPlugin {
      */
     @SneakyThrows
     private static void onEventListenerChange(CtClass ctClass, ClassLoader cLoader, String className) {
-        info("Reloaded Listener class " + className);
+        LOGGER.info("Reloaded Listener class " + className);
 
         SimplePluginManager pluginManager = (SimplePluginManager) Bukkit.getPluginManager();
 
@@ -97,12 +112,12 @@ public class SpigotHotswapPlugin {
         // -- Gather data --
 
         Set<Class<? extends Event>> usedEvents = getUsedEvents(clazz, cLoader);
-        debug("Used events: " + usedEvents);
+        LOGGER.debug("Used events: " + usedEvents);
 
         // -- Unregister Events --
 
         Listener removedListener = analyzeHandlers(getEventListeners, pluginManager, usedEvents, clazz);
-        debug("Removed Listener: " + removedListener);
+        LOGGER.debug("Removed Listener: " + removedListener);
 
         // -- Re-Register events --
 
@@ -170,7 +185,7 @@ public class SpigotHotswapPlugin {
 
 
                 handlerList.unregister(l);
-                debug("Unregistered " + e + " in " + listener.toString());
+                LOGGER.debug("Unregistered " + e + " in " + listener.toString());
 
                 if (usedListener == null) {
                     usedListener = listener;
@@ -244,7 +259,7 @@ public class SpigotHotswapPlugin {
                 }
 
             } else {
-                error("Method " + m + " has invalid parameter count.");
+                LOGGER.error("Method " + m + " has invalid parameter count.");
             }
 
         }
@@ -309,7 +324,7 @@ public class SpigotHotswapPlugin {
         // Package name regex
         String packageName = properties.getProperty("packageName", "");
         if (packageName.equals("")) {
-            error("Properties entry 'packageName' required.");
+            LOGGER.error("Properties entry 'packageName' required.");
             return;
         }
         RE_CLASS = Pattern.compile(packageName);
@@ -320,28 +335,28 @@ public class SpigotHotswapPlugin {
         String logLevel = properties.getProperty("logLevel", "");
         switch (logLevel.toUpperCase()) {
             case "ALL":
-                setLogLevel(Level.ALL);
+                LOGGER.setLogLevel(Logger.LogLevel.ALL);
                 break;
             case "DEBUG":
-                setLogLevel(Level.FINE);
+                LOGGER.setLogLevel(Logger.LogLevel.DEBUG);
                 break;
             case "INFO":
-                setLogLevel(Level.INFO);
+                LOGGER.setLogLevel(Logger.LogLevel.INFO);
                 break;
             case "ERROR":
-                setLogLevel(Level.SEVERE);
+                LOGGER.setLogLevel(Logger.LogLevel.ERROR);
                 break;
 
             case "":    // No Config
-                debug("No 'logLevel' property. Setting level to INFO.");
+                LOGGER.debug("No 'logLevel' property. Setting level to INFO.");
                 break;
 
             default:
-                error("Properties key 'logLevel' has invalid value '" + logLevel + "'.");
+                LOGGER.error("Properties key 'logLevel' has invalid value '" + logLevel + "'.");
         }
     }
 
-    /***
+    /**
      * Initializes the required variables
      */
     private static boolean initData(ClassLoader cLoader, String classname) {
@@ -350,7 +365,7 @@ public class SpigotHotswapPlugin {
         if (properties == null) {
             properties = getProperties(cLoader);
             if (properties == null) {
-                error("SpigotHotswap.properties file missing.");
+                LOGGER.error("SpigotHotswap.properties file missing.");
                 return false;
 
             } else {
@@ -358,26 +373,15 @@ public class SpigotHotswapPlugin {
             }
         }
 
-        // Class filter initialization
-        if (RE_CLASS == null) {
-            return false;
-
-        } else {
-            Matcher m = RE_CLASS.matcher(classname);
-            if (!m.matches()) {
-                return false;
-            }
-        }
-
         // Spigot plugin initialization
         if (pluginName == null || pluginName.equals("")) {
-            error("Properties entry 'pluginName' required.");
+            LOGGER.error("Properties entry 'pluginName' required.");
             return false;
 
         } else if (javaPlugin == null) {
             org.bukkit.plugin.Plugin plugin = Bukkit.getPluginManager().getPlugin(pluginName);
             if (plugin == null) {
-                error("Failed to find plugin '" + pluginName + "'.");
+                LOGGER.error("Failed to find plugin '" + pluginName + "'.");
                 return false;
 
             } else {
@@ -386,52 +390,6 @@ public class SpigotHotswapPlugin {
         }
 
         return true;
-    }
-
-
-    // -----  Logger methods  -----
-
-
-    /**
-     * Constructs the logger
-     */
-    private static Logger getLogger() {
-        Logger logger = Logger.getLogger(SpigotHotswapPlugin.class.getName());
-
-        logger.setUseParentHandlers(false);
-        ConsoleHandler consoleHandler = new ConsoleHandler();
-        consoleHandler.setFormatter(new Formatter());
-        logger.addHandler(consoleHandler);
-        logger.setLevel(Level.INFO);
-
-        return logger;
-    }
-
-    /**
-     * Utility method to set the loglevel to the logger and to its handlers as well
-     */
-    private static void setLogLevel(Level level) {
-        LOGGER.setLevel(level);
-        for (Handler h : LOGGER.getHandlers()) {
-            h.setLevel(level);
-        }
-    }
-
-
-    public static void all(String msg) {
-        LOGGER.log(Level.ALL, msg);
-    }
-
-    public static void debug(String msg) {
-        LOGGER.log(Level.FINE, msg);
-    }
-
-    public static void info(String msg) {
-        LOGGER.log(Level.INFO, msg);
-    }
-
-    public static void error(String msg) {
-        LOGGER.log(Level.SEVERE, msg);
     }
 
 }

@@ -19,7 +19,7 @@ public class Events1 implements Listener {
         System.out.println("[P] Player " + event.getPlayer().getDisplayName() + " lieaft.");
     }
 
-    public int aaswwwssdwwsswsssqss() {
+    public int ss() {
         return 0;
     }
 

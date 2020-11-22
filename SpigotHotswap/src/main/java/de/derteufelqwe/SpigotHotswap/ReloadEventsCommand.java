@@ -25,6 +25,6 @@ public class ReloadEventsCommand implements Command {
     @Override
     public void executeCommand() {
         this.pluginManager.registerEvents(this.listener, this.plugin);
-        SpigotHotswapPlugin.debug("Re-added Listener: " + this.listener);
+        SpigotHotswapPlugin.LOGGER.debug("Re-added Listener: " + this.listener);
     }
 }
